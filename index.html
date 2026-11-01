@@ -53,6 +53,14 @@ nav button.on{color:var(--accent)}
 .chips{display:flex;flex-wrap:wrap;gap:6px}
 .chip{background:var(--card2);border-radius:20px;padding:5px 10px;font-size:13px;display:flex;align-items:center;gap:6px}
 .chip b{cursor:pointer;color:var(--muted)}
+.check{width:26px;height:26px;flex:0 0 26px;border-radius:8px;border:2px solid var(--border);display:flex;align-items:center;justify-content:center;cursor:pointer;font-weight:700}
+.check.on{background:var(--accent);border-color:var(--accent);color:#06210f}
+.done{text-decoration:line-through;color:var(--muted)}
+.line.now{background:var(--card2);border-radius:8px;padding-left:8px;padding-right:4px}
+.week{display:inline-flex;gap:3px;margin-top:4px}
+.week i{width:10px;height:10px;border-radius:3px;background:var(--card2)}
+.week i.on{background:var(--accent)}
+nav button{font-size:11px}
 </style>
 </head>
 <body>
@@ -149,6 +157,43 @@ nav button.on{color:var(--accent)}
   </div>
 </section>
 
+<!-- ДЕНЬ -->
+<section id="tab-day" class="hide">
+  <div class="card">
+    <div class="row" style="margin-bottom:6px">
+      <h2 style="margin:0">Расписание</h2>
+      <div class="seg" style="margin:0"><button id="sWd">Будни</button><button id="sWe">Выходные</button></div>
+    </div>
+    <div id="schList"></div>
+    <div class="row" style="margin-top:8px">
+      <input id="schTime" type="time" style="flex:0 0 105px">
+      <input id="schTitle" placeholder="Что делаю">
+      <button class="btn" id="schAdd" style="flex:0 0 48px">+</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Задачи на сегодня</h2>
+    <div class="muted" id="taskProg" style="margin-bottom:8px"></div>
+    <div class="row">
+      <input id="taskTitle" placeholder="Например: отклики на Kwork">
+      <button class="btn" id="taskAdd" style="flex:0 0 48px">+</button>
+    </div>
+    <div id="taskList" style="margin-top:8px"></div>
+    <div class="muted" style="margin-top:6px">Невыполненное само переносится на следующий день.</div>
+  </div>
+
+  <div class="card">
+    <h2>Привычки</h2>
+    <div class="muted">Отмечай каждый день и держи серию 🔥</div>
+    <div id="habList" style="margin-top:6px"></div>
+    <div class="row" style="margin-top:8px">
+      <input id="habName" placeholder="Новая привычка">
+      <button class="btn" id="habAdd" style="flex:0 0 48px">+</button>
+    </div>
+  </div>
+</section>
+
 <!-- ДАННЫЕ -->
 <section id="tab-data" class="hide">
   <div class="card">
@@ -169,6 +214,7 @@ nav button.on{color:var(--accent)}
   <button data-tab="home" class="on">🏠<br>Главная</button>
   <button data-tab="hist">📜<br>История</button>
   <button data-tab="plan">📋<br>План</button>
+  <button data-tab="day">🗓<br>День</button>
   <button data-tab="data">💾<br>Данные</button>
 </nav>
 <div id="toast"></div>
@@ -185,12 +231,22 @@ function defaults(){
     fixed: [],                                // обязательные траты в месяц
     cats: ['Еда','Зал','Проезд','Учёба','Развлечения','Одежда','Другое'],
     inCats: ['Родители','Подработка','Фриланс','Другое'],
-    foodBudget: 11000
+    foodBudget: 11000,
+    // распорядок дня: wd — будни, we — выходные
+    schedule: {
+      wd: [['07:30','Подъём, завтрак'],['08:30','Пары'],['15:00','Обед'],['16:00','Зал / кардио'],['18:00','Python — 1 час'],
+           ['19:00','Отклики на Kwork'],['20:00','Ужин'],['21:00','Видео / TikTok'],['23:00','Сон']].map(([time,title])=>({id:uid(),time,title})),
+      we: [['09:00','Подъём, завтрак'],['10:00','Python — 2 часа'],['13:00','Зал'],['15:00','Kwork / заказы'],['18:00','Свободное время'],
+           ['23:30','Сон']].map(([time,title])=>({id:uid(),time,title}))
+    },
+    tasks: [],                                // задачи: {id,title,date,done,doneDate}
+    habits: ['Зал','Python','10к шагов'].map(name=>({id:uid(),name,log:{}}))  // log: {'2026-11-02': true}
   };
 }
 let S;
 try { S = JSON.parse(localStorage.getItem(KEY)); } catch(e) { S = null; }
 if (!S || !Array.isArray(S.tx)) S = defaults();
+else S = Object.assign(defaults(), S);       // старые данные + новые разделы, если их ещё не было
 
 function save(){
   try { localStorage.setItem(KEY, JSON.stringify(S)); }
@@ -364,6 +420,103 @@ $('cats').onclick = e => {
   if (confirm(`Удалить категорию «${c}»? Старые траты останутся.`)){ S.cats = S.cats.filter(x=>x!==c); save(); render(); }
 };
 
+// ===== День =====
+let schMode = (now.getDay() % 6 === 0) ? 'we' : 'wd';   // 0 = воскресенье, 6 = суббота
+
+function renderDay(){
+  const cur = new Date(), td = ds(cur);
+
+  // --- расписание ---
+  $('sWd').classList.toggle('on', schMode==='wd');
+  $('sWe').classList.toggle('on', schMode==='we');
+  const list = [...S.schedule[schMode]].sort((a,b)=>a.time.localeCompare(b.time));
+  const todayMode = (cur.getDay() % 6 === 0) ? 'we' : 'wd';
+  const hm = pad(cur.getHours()) + ':' + pad(cur.getMinutes());
+  let curId = null;
+  if (schMode === todayMode) list.forEach(s => { if (s.time <= hm) curId = s.id; });   // последний начавшийся блок = «сейчас»
+  $('schList').innerHTML = list.length ? list.map(s=>`
+    <div class="line ${s.id===curId?'now':''}">
+      <span><b>${esc(s.time)}</b>&nbsp; ${esc(s.title)}${s.id===curId?' <span class="plus" style="font-size:12px">← сейчас</span>':''}</span>
+      <button class="x" data-sdel="${s.id}">✕</button>
+    </div>`).join('') : '<div class="muted">Пусто</div>';
+
+  // --- задачи: невыполненные (любой давности) + выполненные сегодня ---
+  const tasks = S.tasks.filter(t => (!t.done && t.date <= td) || (t.done && t.doneDate === td))
+                       .sort((a,b) => (a.done - b.done) || a.date.localeCompare(b.date));
+  const doneN = tasks.filter(t=>t.done).length;
+  $('taskProg').textContent = tasks.length ? `Сделано ${doneN} из ${tasks.length}` + (doneN===tasks.length ? ' — красавчик 💪' : '') : '';
+  $('taskList').innerHTML = tasks.length ? tasks.map(t=>{
+    const old = !t.done && t.date < td, d = parse(t.date);
+    return `<div class="line">
+      <span style="display:flex;gap:10px;align-items:center">
+        <span class="check ${t.done?'on':''}" data-tdone="${t.id}">${t.done?'✓':''}</span>
+        <span class="${t.done?'done':''}">${esc(t.title)}${old?` <span class="minus" style="font-size:12px">с ${d.getDate()} ${MONTHS[d.getMonth()]}</span>`:''}</span>
+      </span>
+      <button class="x" data-tdel="${t.id}">✕</button>
+    </div>`;
+  }).join('') : '<div class="muted">Задач нет</div>';
+
+  // --- привычки ---
+  const days = [];
+  for (let i=6;i>=0;i--){ const d=new Date(cur); d.setDate(d.getDate()-i); days.push(ds(d)); }
+  $('habList').innerHTML = S.habits.length ? S.habits.map(h=>{
+    const done = !!h.log[td];
+    let streak = 0; const d = new Date(cur);
+    if (!done) d.setDate(d.getDate()-1);              // если сегодня ещё не отметил — серия не сгорает до конца дня
+    while (h.log[ds(d)]) { streak++; d.setDate(d.getDate()-1); }
+    return `<div class="line">
+      <span style="display:flex;gap:10px;align-items:center">
+        <span class="check ${done?'on':''}" data-hdone="${h.id}">${done?'✓':''}</span>
+        <span>${esc(h.name)}<br><span class="week">${days.map(x=>`<i class="${h.log[x]?'on':''}"></i>`).join('')}</span></span>
+      </span>
+      <span style="display:flex;align-items:center;gap:4px">${streak?`🔥${streak}`:''}<button class="x" data-hdel="${h.id}">✕</button></span>
+    </div>`;
+  }).join('') : '<div class="muted">Пусто</div>';
+}
+
+$('sWd').onclick = () => { schMode='wd'; renderDay(); };
+$('sWe').onclick = () => { schMode='we'; renderDay(); };
+$('schAdd').onclick = () => {
+  const time = $('schTime').value, title = $('schTitle').value.trim();
+  if (!time || !title) { toast('Время и дело'); return; }
+  S.schedule[schMode].push({ id: uid(), time, title });
+  $('schTitle').value=''; save(); renderDay();
+};
+$('schList').onclick = e => {
+  const id = e.target.dataset.sdel; if (!id) return;
+  S.schedule[schMode] = S.schedule[schMode].filter(s=>s.id!==id); save(); renderDay();
+};
+
+function addTask(){
+  const title = $('taskTitle').value.trim(); if (!title) return;
+  S.tasks.push({ id: uid(), title, date: ds(new Date()), done: false });
+  $('taskTitle').value=''; save(); renderDay();
+}
+$('taskAdd').onclick = addTask;
+$('taskTitle').onkeydown = e => { if (e.key==='Enter') addTask(); };
+$('taskList').onclick = e => {
+  const d = e.target.dataset;
+  if (d.tdone){ const t = S.tasks.find(x=>x.id===d.tdone); t.done = !t.done; t.doneDate = t.done ? ds(new Date()) : null; save(); renderDay(); }
+  if (d.tdel){ S.tasks = S.tasks.filter(x=>x.id!==d.tdel); save(); renderDay(); }
+};
+
+$('habAdd').onclick = () => {
+  const name = $('habName').value.trim(); if (!name) return;
+  S.habits.push({ id: uid(), name, log: {} }); $('habName').value=''; save(); renderDay();
+};
+$('habList').onclick = e => {
+  const d = e.target.dataset;
+  if (d.hdone){ const h = S.habits.find(x=>x.id===d.hdone), td = ds(new Date());
+    if (h.log[td]) delete h.log[td]; else h.log[td] = true; save(); renderDay(); }
+  if (d.hdel && confirm('Удалить привычку вместе с историей?')){ S.habits = S.habits.filter(x=>x.id!==d.hdel); save(); renderDay(); }
+};
+
+// если приложение висело в фоне и наступил новый день — перезапускаемся, чтобы всё пересчиталось
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && ds(new Date()) !== ds(now)) location.reload();
+  else if (!document.hidden) renderDay();
+});
+
 // ===== Данные =====
 $('exp').onclick = () => {
   const blob = new Blob([JSON.stringify(S,null,1)], {type:'application/json'});
@@ -387,13 +540,14 @@ $('wipe').onclick = () => { if (confirm('Точно удалить ВСЁ?') && 
 // ===== Навигация =====
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   document.querySelectorAll('nav button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
-  ['home','hist','plan','data'].forEach(t => $('tab-'+t).classList.toggle('hide', t!==b.dataset.tab));
+  ['home','hist','plan','day','data'].forEach(t => $('tab-'+t).classList.toggle('hide', t!==b.dataset.tab));
+  if (b.dataset.tab === 'day') renderDay();
   window.scrollTo(0,0);
 });
 $('wPrev').onclick = () => { weekOffset--; renderHome(); };
 $('wNext').onclick = () => { if (weekOffset<0){ weekOffset++; renderHome(); } };
 
-function render(){ fillCatSelect(); renderHome(); renderHist(); renderPlan(); }
+function render(){ fillCatSelect(); renderHome(); renderHist(); renderPlan(); renderDay(); }
 render();
 </script>
 </body>
